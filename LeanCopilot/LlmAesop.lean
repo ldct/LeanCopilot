@@ -17,9 +17,11 @@ def tacGen : Aesop.TacGen := fun (mvarId : MVarId) => do
   let suggestions ← generate model state ""
   -- A temporary workaround to prevent the tactic from using the current theorem.
   -- TODO: Use a more pincipled way, e.g., see Lean4Repl.lean in LeanDojo.
-  let theoremName := match (← liftM (m := MetaM) <| Term.TermElabM.run getDeclName?).1.get! |>.toString with
+  -- println! s!"theorem name: {decl_name%}"
+  let theoremName := match (← getDeclName?).get! |>.toString with
     | "_example" => ""
     | n => (n.splitOn ".").getLast!
+  -- println! s!"theorem name: {theoremName}"
   let theoremNameMatcher := String.Matcher.ofString theoremName
   let filteredSuggestions := suggestions.filterMap fun ((t, s) : String × Float) =>
     let isAesop := t == "aesop"
