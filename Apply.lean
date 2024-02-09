@@ -146,29 +146,31 @@ partial def extractDeclInfo (fileMap : FileMap) (acc : Array LocatedDeclDetails 
     | none => return childLeaves
   | _ => return acc
 
-def extractSorryInfo (decl : LocatedDeclDetails) (fileMap : FileMap) (tree : InfoTree) : MetaM (List (String.Pos × List String)) := do
+def extractSorryInfo (decl : LocatedDeclDetails) (fileMap : FileMap) (tree : InfoTree) : List (String.Pos × List String) :=
   let sorryPos := decl.sorryPos
   let goalresults := (sorryPos.map (tree.goalsAt? fileMap ·)).toList
-  let goals ← goalresults.mapM (fun goals => goals.mapM fun goal => do
-    -- let ti := goal.tacticInfo
-    -- ppGoals goal.ctxInfo ti.goalsBefore
-    ppTacticState goal.tacticInfo.goalsBefore
+  let goals := goalresults.mapM (fun goals => goals.mapM fun goal => do
+    let ti := goal.tacticInfo
+    ppGoals goal.ctxInfo ti.goalsBefore
   )
-  return sorryPos.toList.zip goals
+  let goalStrs := match goals.run' () with
+    | some v => v
+    | none => panic! "extractSorryInfo: failed to extract local goals"
+  sorryPos.toList.zip goalStrs
 
-def resolveDeclsAux (fileMap : FileMap) (acc : Array LocatedDeclDetails := #[]) (t : InfoTree) : MetaM ((Array LocatedDeclDetails) × (List (String.Pos × List String))) := do
+def resolveDeclsAux (fileMap : FileMap) (acc : Array LocatedDeclDetails := #[]) (t : InfoTree) : IO ((Array LocatedDeclDetails) × (List (String.Pos × List String))) := do
   let declDetails ← extractDeclInfo fileMap acc t
-  let sorryInfo ← (declDetails.filter (fun decl => decl.hasSorry)).mapM (fun decl => extractSorryInfo decl fileMap t)
+  let sorryInfo := (declDetails.filter (fun decl => decl.hasSorry)).map (fun decl => extractSorryInfo decl fileMap t)
   let flatSorryInfo := sorryInfo.toList.join
   return (declDetails, flatSorryInfo)
 
-def resolveDecls (fileMap : FileMap) (trees : Array InfoTree) : MetaM ((Array LocatedDeclDetails) × (Array (String.Pos × List String))):= do
+def resolveDecls (fileMap : FileMap) (trees : Array InfoTree) : IO ((Array LocatedDeclDetails) × (Array (String.Pos × List String))):= do
   let result ← trees.mapM (resolveDeclsAux fileMap)
   let decls := (result.map (fun (decls, _) => decls.toList)).toList.join
   let sorries := (result.map (fun (_, sorries) => sorries)).toList.join
   return (decls.toArray, sorries.toArray)
 
-def extractDecls (file : System.FilePath) : MetaM <| ((Array LocatedDeclDetails) × (Array (String.Pos × List String))) := do
+def extractDecls (file : System.FilePath) : IO <| ((Array LocatedDeclDetails) × (Array (String.Pos × List String))) := do
   let fileContents ← IO.FS.readFile file
   let fileMap := FileMap.ofString fileContents
   let context := Parser.mkInputContext fileContents file.toString
@@ -177,20 +179,20 @@ def extractDecls (file : System.FilePath) : MetaM <| ((Array LocatedDeclDetails)
   if messages.hasErrors then
     for msg in messages.toList do
       if msg.severity == .error then
-        panic! s!"Error: {← msg.toString}"
+        IO.throwServerError =<< msg.toString
   let commandState := { Command.mkState environment messages with infoState := { enabled := true } }
   let s ← IO.processCommands context state commandState
   resolveDecls fileMap s.commandState.infoState.trees.toArray
 
-def sorryCount (file : System.FilePath) : MetaM Nat := do
+def sorryCount (file : System.FilePath) : IO Nat := do
   let decls ← extractDecls file
   return decls.1.foldl (init := 0) (fun acc decl => if decl.hasSorry then acc + 1 else acc)
 
-def extractSorryDecls (file : System.FilePath) : MetaM (Array LocatedDeclDetails) := do
+def extractSorryDecls (file : System.FilePath) : IO (Array LocatedDeclDetails) := do
   let decls ← extractDecls file
   return decls.1.filter (fun decl => decl.hasSorry)
 
-def extractSorry (file : System.FilePath) : MetaM (Array (String.Pos × List String)) := do
+def extractSorry (file : System.FilePath) : IO (Array (String.Pos × List String)) := do
   let decls ← extractDecls file
   return decls.2
 
