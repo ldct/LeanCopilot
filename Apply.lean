@@ -204,3 +204,36 @@ def exampleFilePath : System.FilePath := "../test/Example.lean"
 #eval sorryCount exampleFilePath
 #eval extractSorryDecls exampleFilePath
 #eval extractSorry exampleFilePath
+
+
+open SuggestTactics in
+def getSuggestions (goals : List String) : Tactic.TacticM (Array String) := do
+    let goal := goals.head!
+    let tacticsWithScores ← suggestTacticsGivenState goal ""
+    let tacStrs := tacticsWithScores.map (·.1)
+    let tacStxs ← tacStrs.filterMapM fun tstr : String => do match runParserCategory (← getEnv) `tactic tstr with
+      | Except.error _ => return none
+      | Except.ok stx => return some stx
+    let tacs := Nondet.ofList tacStxs.toList
+    let results := tacs.filterMapM fun t : Syntax => do
+      if let some msgs ← observing? (withMessageLog (withoutInfoTrees (evalTactic t))) then
+        return some (← getGoals, ← suggestion t.prettyPrint.pretty' msgs)
+      else
+        return none
+    let results ← (results.toMLList.takeUpToFirst fun r => r.1.1.isEmpty).asArray
+    let results := results.qsort (·.1.1.length < ·.1.1.length)
+    let resultSuggestions ← (results.mapM (·.1.2.suggestion.prettyExtra))
+    match results.find? (·.1.1.isEmpty) with
+    | some r =>
+      setMCtx r.2.term.meta.meta.mctx
+    | none => admitGoal (← getMainGoal)
+    return resultSuggestions
+
+def proveGoals (filePath : FilePath): Tactic.TacticM (Array (String.Pos × List String × String)) := do
+  let sorries ← extractSorry filePath
+  let suggestions ← sorries.mapM (fun (pos, goals) => do
+    match (← getSuggestions goals) with
+    | #[] => return (pos, goals, "No suggestions found")
+    | s => return (pos, goals, s.toList.head!))
+  println! suggestions
+  return suggestions
