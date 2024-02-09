@@ -1,6 +1,8 @@
-import Lean.Elab
+import Lean
+import LeanCopilot
 
-open Lean Elab
+open Lean Elab Tactic Parser System
+open LeanCopilot
 
 
 deriving instance ToJson, FromJson for String.Pos
@@ -86,21 +88,25 @@ def ppGoals (ctx : ContextInfo) (goals : List MVarId) : IO String :=
 partial def IsSorry : InfoTree → IO Bool :=
   go none
 where go ci?
-  | .context ci t => go ci t
+  | .context ci t => go (ci.mergeIntoOuter? ci?) t
   | .node i cs =>
-    if let (some ci, .ofTermInfo ti) := (ci?, i) then do
+    match ci?, i with
+    | some ci, .ofTermInfo ti
+    | some ci, .ofOmissionInfo { toTermInfo := ti } => do
       let expr ← ti.runMetaM ci (instantiateMVars ti.expr)
-      return expr.isSorry
-    else
+      return expr.hasSorry
+    | _, _ =>
       cs.anyM (go ci?)
   | _ => return false
 
 partial def extractSorryPos : InfoTree → IO (Array String.Pos) :=
   go none
 where go ci?
-  | .context ci t => go ci t
+  | .context ci t => go (ci.mergeIntoOuter? ci?) t
   | .node i cs =>
-    if let (some ci, .ofTermInfo ti) := (ci?, i) then do
+    match ci?, i with
+    | some ci, .ofTermInfo ti
+    | some ci, .ofOmissionInfo { toTermInfo := ti } => do
       let expr ← ti.runMetaM ci (instantiateMVars ti.expr)
       if expr.isSorry then
         let pos := match (ti.stx.getPos?) with
@@ -109,7 +115,7 @@ where go ci?
         return #[pos]
       else
         return #[]
-    else
+    | _, _ =>
       cs.foldlM (init := #[]) (fun acc t => do
         let pos ← go ci? t
         return acc ++ pos)
@@ -192,7 +198,7 @@ def extractSorry (file : System.FilePath) : IO (Array (String.Pos × List String
 
 
 -- Quick test.
-def exampleFilePath : System.FilePath := "test/Example.lean"
+def exampleFilePath : System.FilePath := "../test/Example.lean"
 
 #eval extractDecls exampleFilePath
 #eval sorryCount exampleFilePath
