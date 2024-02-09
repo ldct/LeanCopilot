@@ -210,6 +210,7 @@ open SuggestTactics in
 def getSuggestions (goals : List String) : Tactic.TacticM (Array String) := do
     let goal := goals.head!
     let tacticsWithScores ← suggestTacticsGivenState goal ""
+    println! tacticsWithScores
     let tacStrs := tacticsWithScores.map (·.1)
     let tacStxs ← tacStrs.filterMapM fun tstr : String => do match runParserCategory (← getEnv) `tactic tstr with
       | Except.error _ => return none
@@ -223,17 +224,21 @@ def getSuggestions (goals : List String) : Tactic.TacticM (Array String) := do
     let results ← (results.toMLList.takeUpToFirst fun r => r.1.1.isEmpty).asArray
     let results := results.qsort (·.1.1.length < ·.1.1.length)
     let resultSuggestions ← (results.mapM (·.1.2.suggestion.prettyExtra))
-    match results.find? (·.1.1.isEmpty) with
-    | some r =>
-      setMCtx r.2.term.meta.meta.mctx
-    | none => admitGoal (← getMainGoal)
     return resultSuggestions
 
 def proveGoals (filePath : FilePath): Tactic.TacticM (Array (String.Pos × List String × String)) := do
   let sorries ← extractSorry filePath
+  println! sorries
   let suggestions ← sorries.mapM (fun (pos, goals) => do
     match (← getSuggestions goals) with
     | #[] => return (pos, goals, "No suggestions found")
     | s => return (pos, goals, s.toList.head!))
-  println! suggestions
   return suggestions
+
+
+-- To test it.
+syntax "prove_goals" : tactic
+elab_rules : tactic
+  | `(tactic | prove_goals) => do
+    let suggestions ← proveGoals exampleFilePath
+    println! suggestions
